@@ -27,7 +27,9 @@ PROMPTS_DIR="$SCRIPT_DIR/prompts"
 
 # Configuration
 MAX_DIFF_LINES="${MAX_DIFF_LINES:-1000}"  # Configurable via .env, default 1000
-MAX_COMMIT_LENGTH="${MAX_COMMIT_LENGTH:-200}"  # Configurable via .env
+MAX_COMMIT_LENGTH="${MAX_COMMIT_LENGTH:-72}"  # Configurable via .env
+REQUIRE_SCOPE="${REQUIRE_SCOPE:-false}"  # Require scope in commit messages
+OLLAMA_TEMPERATURE="${OLLAMA_TEMPERATURE:-0.1}"  # Temperature for generation
 
 # Colors
 RED='\033[0;31m'
@@ -91,44 +93,58 @@ commit_message() {
   echo -e "${YELLOW}Using model: ${OLLAMA_MODEL}${NC}"
 
   # Use chat API with conventional commits format (with body)
-  SYSTEM_PROMPT="You are a git commit message generator following conventional commits format.
+  SYSTEM_PROMPT="Generate git commit messages in conventional commits format.
 
-Format:
-<type>(<optional scope>): <description>
+EXACT FORMAT (no exceptions):
+type(scope): lowercase description
 
-<optional body>
+body text here
 
-<optional footer>
+RULES:
+- type: feat, fix, docs, style, refactor, perf, test, chore, build, ci
+- scope: component name (optional but recommended)
+- description: lowercase, imperative mood, no period
+- body: explain WHY (not what)
+- Use bullet points (-) NOT numbered lists (1., 2., 3.)
 
-Rules:
-- First line: type(scope): description (max 72 chars, lowercase description, no period)
-- Types: feat, fix, docs, style, refactor, perf, test, chore, build, ci
-- Body: explain WHAT changed and WHY (wrap at 72 chars per line)
-- Body is REQUIRED for non-trivial changes
-- Footer: breaking changes, issue references (e.g., 'Fixes #123')
+OUTPUT REQUIREMENTS:
+- Start IMMEDIATELY with type (no markdown, no prefix)
+- First line ≤72 chars
+- Include body for non-trivial changes
+- Use dashes (-) for lists, NEVER numbers"
 
-Examples:
+  USER_PROMPT="Here are examples of CORRECT commit messages:
+
+Example 1:
 feat(auth): add oauth2 login support
 
 Implement OAuth2 authentication flow with Google and GitHub providers.
-This replaces the previous basic auth system to improve security.
+This replaces the previous basic auth system to improve security and
+provide better user experience.
 
-feat: add user dashboard
-
-Create initial dashboard with user stats and recent activity.
-Includes responsive design for mobile devices.
-
+Example 2:
 fix(api): handle null user response
 
 Add null check before accessing user properties to prevent crashes
-when the API returns an unexpected empty response.
+when the API returns unexpected empty responses.
 
-Fixes #42"
+Example 3:
+feat(nvim): add LSP configuration with Mason
 
-  USER_PROMPT="Diff:
+Add comprehensive LSP setup with the following improvements:
+- Install multiple language servers via mason-lspconfig
+- Configure TypeScript, Tailwind CSS, and JSON LSPs
+- Add mason-tool-installer for formatters and linters
+- Enable code actions with organize imports support
+
+This provides a more robust development environment with better
+language support and automatic tool management.
+
+Now, analyze this diff and generate a commit message in the EXACT same format:
+
 ${DIFF_TRUNCATED}
 
-Commit message:"
+Your commit message (start directly with type, no markdown):"
 
   # Call API with increased token limit for full commit messages
   RESPONSE=$(curl -s "${OLLAMA_HOST}/api/chat" -d "{
@@ -139,10 +155,12 @@ Commit message:"
     ],
     \"stream\": false,
     \"options\": {
-      \"temperature\": 0.2,
-      \"top_p\": 0.8,
-      \"num_predict\": 200,
-      \"repeat_penalty\": 1.1
+      \"temperature\": ${OLLAMA_TEMPERATURE},
+      \"top_p\": 0.95,
+      \"top_k\": 20,
+      \"num_predict\": 300,
+      \"repeat_penalty\": 1.2,
+      \"stop\": [\"\\n\\n\\n\\n\", \"---\", \"Example\"]
     }
   }")
 
@@ -155,8 +173,25 @@ Commit message:"
     exit 1
   fi
 
-  # Keep full multi-line message
-  MESSAGE="$RAW_MESSAGE"
+  # Clean up markdown code blocks and unwanted prefixes
+  # Remove markdown code fence blocks (```markdown, ```text, ```)
+  MESSAGE=$(echo "$RAW_MESSAGE" | grep -v '^```')
+
+  # Remove common prefixes the model might add
+  MESSAGE=$(echo "$MESSAGE" | sed 's/^Commit message: *//I')
+  MESSAGE=$(echo "$MESSAGE" | sed 's/^Here is the commit message: *//I')
+  MESSAGE=$(echo "$MESSAGE" | sed 's/^Your commit message: *//I')
+  MESSAGE=$(echo "$MESSAGE" | sed 's/^Generated commit message: *//I')
+
+  # Remove any leading "diff:" or similar that might come from echoing examples
+  MESSAGE=$(echo "$MESSAGE" | sed 's/^Diff: *//I')
+
+  # Trim leading and trailing whitespace
+  MESSAGE=$(echo "$MESSAGE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+  # Convert numbered lists to bullet points
+  # Match patterns like "1. ", "2. ", "3. " etc. and replace with "- "
+  MESSAGE=$(echo "$MESSAGE" | sed -E 's/^[0-9]+\. /- /g')
 
   # Extract and clean first line
   FIRST_LINE=$(echo "$MESSAGE" | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -167,10 +202,80 @@ Commit message:"
   # Remove trailing period from first line
   FIRST_LINE=$(echo "$FIRST_LINE" | sed 's/\.$//')
 
-  # Validate first line follows conventional commits
-  if ! echo "$FIRST_LINE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)'; then
-    echo -e "${YELLOW}Warning: First line doesn't follow conventional commits format${NC}"
-    echo -e "${YELLOW}Got: ${FIRST_LINE}${NC}"
+  # Validate first line follows conventional commits strictly
+  if ! echo "$FIRST_LINE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(\([a-z0-9-]+\))?: [a-z]'; then
+    echo -e "${RED}Error: First line doesn't follow conventional commits format${NC}"
+    echo -e "${RED}Got: ${FIRST_LINE}${NC}"
+    echo ""
+    echo -e "${YELLOW}Expected format: type(scope): lowercase description${NC}"
+    echo -e "${YELLOW}Valid types: feat, fix, docs, style, refactor, perf, test, chore, build, ci${NC}"
+    echo -e "${YELLOW}Example: feat(auth): add oauth2 login support${NC}"
+    echo ""
+    echo -e "${YELLOW}Options:${NC}"
+    echo -e "${YELLOW}  [R] Regenerate with AI${NC}"
+    echo -e "${YELLOW}  [F] Auto-fix format (smart reformatting)${NC}"
+    echo -e "${YELLOW}  [N] Keep as is${NC}"
+    read -p "Choose (R/F/N): " -n 1 -r CHOICE
+    echo
+
+    if [[ $CHOICE =~ ^[Rr]$ ]]; then
+      echo -e "${BLUE}Regenerating with stricter prompt...${NC}"
+      # Recursively call the commit function instead of exec
+      commit_message
+      return
+    elif [[ $CHOICE =~ ^[Ff]$ ]]; then
+      echo -e "${BLUE}Auto-fixing format...${NC}"
+
+      # Smart detection of commit type based on keywords
+      TYPE="chore"
+      if echo "$FIRST_LINE" | grep -qiE '(add|new|create|implement).*feature'; then
+        TYPE="feat"
+      elif echo "$FIRST_LINE" | grep -qiE '^(add|new|create|implement)'; then
+        TYPE="feat"
+      elif echo "$FIRST_LINE" | grep -qiE '(fix|resolve|correct|patch)'; then
+        TYPE="fix"
+      elif echo "$FIRST_LINE" | grep -qiE '(update|modify|change|improve|enhance)'; then
+        TYPE="refactor"
+      elif echo "$FIRST_LINE" | grep -qiE '(document|doc|readme)'; then
+        TYPE="docs"
+      elif echo "$FIRST_LINE" | grep -qiE '(style|format|lint)'; then
+        TYPE="style"
+      elif echo "$FIRST_LINE" | grep -qiE '(test|spec)'; then
+        TYPE="test"
+      elif echo "$FIRST_LINE" | grep -qiE '(perf|performance|optimi)'; then
+        TYPE="perf"
+      elif echo "$FIRST_LINE" | grep -qiE '(build|ci|deploy)'; then
+        TYPE="build"
+      fi
+
+      # Try to extract scope from context
+      SCOPE=""
+      if echo "$DIFF_TRUNCATED" | grep -q "nvim\|neovim\|\.config/nvim"; then
+        SCOPE="nvim"
+      elif echo "$DIFF_TRUNCATED" | grep -q "lsp\|language.server"; then
+        SCOPE="lsp"
+      elif echo "$DIFF_TRUNCATED" | grep -q "auth\|login\|oauth"; then
+        SCOPE="auth"
+      elif echo "$DIFF_TRUNCATED" | grep -q "api\|endpoint"; then
+        SCOPE="api"
+      elif echo "$DIFF_TRUNCATED" | grep -q "ui\|interface\|component"; then
+        SCOPE="ui"
+      elif echo "$DIFF_TRUNCATED" | grep -q "config\|configuration"; then
+        SCOPE="config"
+      fi
+
+      # Convert first word to lowercase and create description
+      DESC=$(echo "$FIRST_LINE" | sed 's/^\([A-Z]\)/\l\1/')
+
+      # Reconstruct first line
+      if [ -n "$SCOPE" ]; then
+        FIRST_LINE="${TYPE}(${SCOPE}): ${DESC}"
+      else
+        FIRST_LINE="${TYPE}: ${DESC}"
+      fi
+
+      echo -e "${GREEN}Fixed to: ${FIRST_LINE}${NC}"
+    fi
   fi
 
   # Reconstruct message with cleaned first line
