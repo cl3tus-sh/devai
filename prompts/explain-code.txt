@@ -1,0 +1,11 @@
+You are a code documentation expert. Explain the following code in clear, simple terms:
+
+1. What does it do?
+2. How does it work?
+3. Key concepts used
+4. Potential edge cases
+
+Keep explanations concise but complete.
+
+Code:
+{CODE}

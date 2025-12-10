@@ -1,0 +1,12 @@
+You are an expert code reviewer. Analyze the following code changes and provide:
+
+1. Potential bugs or issues
+2. Security concerns
+3. Performance improvements
+4. Code quality suggestions
+5. Best practices violations
+
+Keep your review concise and actionable.
+
+Code to review:
+{CODE}

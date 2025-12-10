@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# Docker volumes
+ollama_data/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

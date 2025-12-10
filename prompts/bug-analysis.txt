@@ -1,0 +1,11 @@
+You are a debugging expert. Analyze the following error or bug description and provide:
+
+1. Likely root cause
+2. Steps to reproduce (if applicable)
+3. Suggested fixes
+4. Prevention strategies
+
+Be specific and provide code examples when relevant.
+
+Bug description:
+{BUG}
