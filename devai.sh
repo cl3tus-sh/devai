@@ -203,7 +203,8 @@ Your commit message (start directly with type, no markdown):"
   FIRST_LINE=$(echo "$FIRST_LINE" | sed 's/\.$//')
 
   # Validate first line follows conventional commits strictly
-  if ! echo "$FIRST_LINE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(\([a-z0-9-]+\))?: [a-z]'; then
+  # Allow alphanumeric, dashes, dots, underscores in scope
+  if ! echo "$FIRST_LINE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(\([a-z0-9._-]+\))?: [a-z]'; then
     echo -e "${RED}Error: First line doesn't follow conventional commits format${NC}"
     echo -e "${RED}Got: ${FIRST_LINE}${NC}"
     echo ""
@@ -225,6 +226,13 @@ Your commit message (start directly with type, no markdown):"
       return
     elif [[ $CHOICE =~ ^[Ff]$ ]]; then
       echo -e "${BLUE}Auto-fixing format...${NC}"
+
+      # Check if message already starts with a valid type (just wrong format)
+      if echo "$FIRST_LINE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)'; then
+        echo -e "${YELLOW}Message already has a type prefix but wrong format.${NC}"
+        echo -e "${YELLOW}Please check manually or regenerate (R).${NC}"
+        return
+      fi
 
       # Smart detection of commit type based on keywords
       TYPE="chore"
